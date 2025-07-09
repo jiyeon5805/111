@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>맞춤형 건강 관리 시뮬레이션</title>
+<style>
+  body { font-family: 'Malgun Gothic', Arial, sans-serif; max-width: 760px; margin: 20px auto; padding: 10px; }
+  h1, h2, h3 { text-align: center; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 15px; }
+  th, td { border: 1px solid #666; padding: 8px; text-align: center; }
+  th { background-color: #f0f0f0; }
+  .checkmark { color: green; font-weight: bold; }
+  .crossmark { color: red; font-weight: bold; }
+  #patient-status { margin:10px 0; font-size:1.1em; text-align:center; }
+  #treatment-selection { margin:15px 0; text-align:center; }
+  #result, #summary, #ranking { font-weight:bold; font-size:1.1em; margin-top:15px; text-align:center; white-space:pre-line; }
+  #patient-count { font-size:1.1em; text-align:center; margin-bottom:10px; }
+  button { padding:8px 15px; margin:5px; cursor:pointer; }
+  label { margin-right:15px; }
+  #nickname-box { display:none; text-align:center; margin-top:15px; }
+</style>
+</head>
+<body>
+
+<h1>맞춤형 건강 관리 시뮬레이션</h1>
+
+<section>
+  <h2>신체 특성 × 관리 방법 효과 표 (✔ 효과 높음, ✖ 효과 낮음)</h2>
+  <table id="effect-table"></table>
+</section>
+
+<section>
+  <div id="patient-count">현재 치료 대상: 1 / 5</div>
+  <div id="patient-status"><strong>최근 근황:</strong> ...</div>
+
+  <div id="treatment-selection">
+    <h3>관리 방법 선택 (최대 2개)</h3>
+    <form id="treatment-form"></form>
+  </div>
+
+  <button id="treat-btn">관리 진행</button>
+  <button id="new-patient-btn" disabled>새 대상 생성</button>
+  <button id="restart-btn" style="display:none;">다시 하기</button>
+
+  <div id="result"></div>
+  <div id="summary"></div>
+
+  <div id="nickname-box">
+    <input type="text" id="nick-input" placeholder="닉네임 입력" maxlength="12">
+    <button id="save-score-btn">점수 등록</button>
+  </div>
+
+  <div id="ranking"></div>
+  <div style="text-align:center;">
+    <button id="reset-rank-btn" style="display:none;">랭킹 초기화</button>
+  </div>
+</section>
+
+<script>
+(() => {
+/* ---------- 헬퍼: 셀 만들기 (표·함수에서 사용) ---------- */
+function makeCell(tag, txt, cls) {
+  const el = document.createElement(tag);
+  el.innerHTML = txt;
+  if (cls) el.className = cls;
+  return el;
+}
+
+/* ---------- 점수 규칙 ---------- */
+function calcScore(tries, success, best) {
+  if (!success) return 0;
+  let pts = 20 - (tries - 1) * 5;        // 1회 성공 = 20, 2회 = 15, 3회 = 10
+  if (pts < 0) pts = 0;
+  if (best) pts += 5;                    // 최고 확률 보너스
+  return pts;                            // 최대 25
+}
+
+/* ---------- 데이터 ---------- */
+const traits = { 
+  '피부 건강':0.12,
+  '눈 건강':0.07,
+  '머리카락 건강':0.18,
+  '키 성장':0.15,
+  '혈액 순환':0.10,
+  '정신 건강':0.10 // 정신 건강 추가
+};
+const managements = {
+  '영양제 A':{'피부 건강':0.7,'눈 건강':0.3,'머리카락 건강':0.4,'키 성장':0.2,'혈액 순환':0.45,'정신 건강':0.1},
+  '운동법 B':{'피부 건강':0.3,'눈 건강':0.15,'머리카락 건강':0.3,'키 성장':0.5,'혈액 순환':0.65,'정신 건강':0.15},
+  '식이요법 C':{'피부 건강':0.6,'눈 건강':0.7,'머리카락 건강':0.2,'키 성장':0.1,'혈액 순환':0.35,'정신 건강':0.05},
+  '모발 관리법 D':{'피부 건강':0.1,'눈 건강':0.1,'머리카락 건강':0.75,'키 성장':0.1,'혈액 순환':0.1,'정신 건강':0.0},
+  '성장 촉진법 E':{'피부 건강':0.1,'눈 건강':0.2,'머리카락 건강':0.2,'키 성장':0.85,'혈액 순환':0.25,'정신 건강':0.05},
+  '혈액 순환법 F':{'피부 건강':0.4,'눈 건강':0.2,'머리카락 건강':0.3,'키 성장':0.1,'혈액 순환':0.8,'정신 건강':0.1},
+  '시력 관리법 G':{'피부 건강':0.1,'눈 건강':0.85,'머리카락 건강':0.1,'키 성장':0.05,'혈액 순환':0.15,'정신 건강':0.0},
+  '명상법 H':{'피부 건강':0.0,'눈 건강':0.0,'머리카락 건강':0.0,'키 성장':0.0,'혈액 순환':0.0,'정신 건강':0.8}, // 정신 건강 집중
+  '상담법 I':{'피부 건강':0.0,'눈 건강':0.0,'머리카락 건강':0.0,'키 성장':0.0,'혈액 순환':0.0,'정신 건강':0.85}
+};
+const GOOD_THR=0.5, BASE_PROB=0.05, MAX_TRIES=3, MAX_PTS=5;
+
+/* ---------- DOM ---------- */
+const tbl=document.getElementById('effect-table');
+const form=document.getElementById('treatment-form');
+const status=document.getElementById('patient-status');
+const cnt=document.getElementById('patient-count');
+const resDiv=document.getElementById('result');
+const sumDiv=document.getElementById('summary');
+const rankDiv=document.getElementById('ranking');
+const nickBox=document.getElementById('nickname-box');
+const nickInput=document.getElementById('nick-input');
+const btnSave=document.getElementById('save-score-btn');
+const btnRun=document.getElementById('treat-btn');
+const btnNext=document.getElementById('new-patient-btn');
+const btnRestart=document.getElementById('restart-btn');
+const btnReset=document.getElementById('reset-rank-btn');
+
+/* ---------- 상태 ---------- */
+let patientIdx, tries, patient;
+let totalScore=0; const records=[];
+const LS_KEY='healthGameRank';
+
+/* ---------- util ---------- */
+const clues = {
+  '피부 건강':["피부 건조·가려움","트러블 증가"],
+  '눈 건강':["눈 피로·뻑뻑","시야 흐림"],
+  '머리카락 건강':["머리 빠짐 증가","두피 가려움"],
+  '키 성장':["키 성장 정체","발달 지연"],
+  '혈액 순환':["손발 저림","쉽게 피로"],
+  '정신 건강':["집중력 저하","우울감 증가","불안감 상승"] // 정신 건강 단서 추가
+};
+const rand=arr=>arr[Math.floor(Math.random()*arr.length)];
+const mutated=p=>Object.entries(p).filter(([,v])=>v).map(([k])=>k);
+const arrEq=(a,b)=>a.length===b.length&&[...a].sort().every((v,i)=>v===[...b].sort()[i]);
+
+function genPatient(){ let p; do{p={}; for(const t in traits)p[t]=Math.random()<traits[t];}while(!mutated(p).length); return p; }
+function recent(p){ const m=mutated(p); if(m.length===1) return rand(clues[m[0]]); const pick=[...m]; while(pick.length>2) pick.splice(Math.random()*pick.length|0,1); return pick.map(t=>rand(clues[t])).join(' '); }
+function prob(p,sel){ const muts=mutated(p); let s=0,w=0; muts.forEach(t=>{const wgt=traits[t],eff=Math.min(sel.reduce((a,m)=>a+managements[m][t],0),1); s+=wgt*eff; w+=wgt;}); return Math.min(1,BASE_PROB+(s/w)*(1-BASE_PROB)); }
+function bestCombos(p){ const keys=Object.keys(managements); let max=0,best=[]; keys.forEach((m,i)=>{const pr=prob(p,[m]); if(pr>max){max=pr;best=[[m]];} else if(pr===max)best.push([m]); for(let j=i+1;j<keys.length;j++){const c=[m,keys[j]],pr2=prob(p,c); if(pr2>max){max=pr2;best=[c];} else if(pr2===max)best.push(c);} }); return {max,best}; }
+const isBest=(sel,best)=>best.some(c=>arrEq(c,sel));
+const loadRank=()=>JSON.parse(localStorage.getItem(LS_KEY)||'[]');
+const saveRank=r=>localStorage.setItem(LS_KEY,JSON.stringify(r));
+
+/* ---------- UI ---------- */
+function drawTable(){
+  tbl.innerHTML='';
+  const head=document.createElement('tr');
+  head.appendChild(makeCell('th','신체 특성'));
+  for(const m in managements) head.appendChild(makeCell('th',m));
+  tbl.appendChild(head);
+  for(const t in traits){
+    const row=document.createElement('tr');
+    row.appendChild(makeCell('td',t));
+    for(const m in managements){
+      const ok=managements[m][t]>=GOOD_THR;
+      row.appendChild(makeCell('td',ok?'✔':'✖',ok?'checkmark':'crossmark'));
+    }
+    tbl.appendChild(row);
+  }
+}
+function drawChecks(){
+  form.innerHTML='';
+  for(const m in managements){
+    const lb=document.createElement('label');
+    const cb=document.createElement('input');
+    cb.type='checkbox'; cb.name='m'; cb.value=m;
+    cb.onchange=()=>{const sel=[...form.elements.m].filter(c=>c.checked); if(sel.length>2){cb.checked=false;alert('최대 2개!');}};
+    lb.append(cb,' ',m); form.append(lb);
+  }
+}
+function updateRank(){
+  const arr=loadRank().sort((a,b)=>b.score-a.score).slice(0,10);
+  let t="=== 랭킹 TOP 10 ===\n";
+  arr.forEach((r,i)=>{t+=`${i+1}. ${r.name.padEnd(12,' ')}  ${r.score}점\n`;});
+  rankDiv.textContent=t; btnReset.style.display=arr.length?'inline-block':'none';
+}
+
+/* ---------- 게임 흐름 ---------- */
+function startPatient(){
+  patient=genPatient(); tries=0;
+  cnt.textContent=`현재 치료 대상: ${patientIdx} / ${MAX_PTS}`;
+  status.innerHTML='<strong>최근 근황:</strong> '+recent(patient);
+  resDiv.textContent=''; [...form.elements.m].forEach(c=>{c.checked=false;c.disabled=false;});
+  btnRun.disabled=false; btnNext.disabled=true;
+}
+function record(tries,ok,best){ const score=calcScore(tries,ok,best); totalScore+=score; records.push({tries,ok,best,score}); }
+function nextPatient(){ if(patientIdx>=MAX_PTS){finish();return;} patientIdx++; startPatient(); }
+function finish(){
+  btnRun.disabled=true; btnNext.disabled=true; [...form.elements.m].forEach(c=>c.disabled=true);
+  status.textContent="모든 대상 치료 완료!";
+  showSummary(); nickBox.style.display='block'; btnRestart.style.display='inline-block';
+}
+function showSummary(){
+  let succ=0,bestCnt=0,trySum=0, txt="=== 5명 치료 결과 ===\n\n";
+  records.forEach((r,i)=>{txt+=`대상 ${i+1}: 시도 ${r.tries}회 | 성공 ${r.ok?'O':'X'} | 최고 ${r.best?'O':'X'} | 점수 ${r.score}\n`;
+    if(r.ok)succ++; if(r.best)bestCnt++; trySum+=r.tries;});
+  txt+=`\n총 점수 : ${totalScore} / 125\n성공률  : ${(succ/MAX_PTS*100).toFixed(1)}%\n평균 시도: ${(trySum/MAX_PTS).toFixed(2)}회\n최고 조합 횟수: ${bestCnt}`;
+  sumDiv.textContent=txt;
+}
+
+/* ---------- 이벤트 ---------- */
+btnRun.onclick=()=>{
+  if(tries>=MAX_TRIES){alert('시도 초과');return;}
+  const sel=[...form.elements.m].filter(c=>c.checked).map(c=>c.value);
+  if(!sel.length){alert('최소 1개 선택');return;}
+  const {best}=bestCombos(patient);
+  const pr=prob(patient,sel);
+  const ok=Math.random()<pr;
+  const bestHit=isBest(sel,best);
+  tries++;
+  resDiv.textContent=`선택: ${sel.join(', ')}\n성공 확률 ${(pr*100).toFixed(1)}%\n결과: ${ok?'성공':'실패'}\n남은 시도 ${MAX_TRIES-tries}${bestHit?'\n>> 최고 확률 조합!':''}`;
+  if(ok||bestHit||tries>=MAX_TRIES){
+    record(tries,ok,bestHit); [...form.elements.m].forEach(c=>c.disabled=true);
+    btnRun.disabled=true; btnNext.disabled=false;
+  }
+};
+btnNext.onclick=nextPatient;
+
+btnSave.onclick=()=>{
+  const name=nickInput.value.trim()||'NONAME';
+  const rank=loadRank(); rank.push({name,score:totalScore}); saveRank(rank);
+  nickBox.style.display='none'; updateRank();
+};
+
+btnRestart.onclick=init;
+
+/* 랭킹 초기화 */
+btnReset.onclick=()=>{
+  const pw=prompt("랭킹 초기화를 위해 비밀번호(0515)를 입력하세요:");
+  if(pw===null) return;
+  if(pw==="0515"){
+    localStorage.removeItem(LS_KEY);
+    alert("랭킹이 초기화되었습니다.");
+    updateRank();
+  }else alert("비밀번호가 틀렸습니다.");
+};
+
+/* ---------- 초기 ---------- */
+function init(){
+  patientIdx=1; tries=0; totalScore=0; records.length=0;
+  sumDiv.textContent=''; resDiv.textContent=''; nickBox.style.display='none';
+  drawTable(); drawChecks(); startPatient();
+  btnRestart.style.display='none'; updateRank();
+}
+init();
+})();
+</script>
+</body>
+</html>
